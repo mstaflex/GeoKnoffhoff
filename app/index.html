@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="Länder per Drag and Drop auf die richtigen Umrisse ziehen – Europa, Afrika, Asien, Amerika, Ozeanien.">
+<meta name="color-scheme" content="dark">
+<title>GeoKnoffhoff – Länder zuordnen</title>
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<header class="topbar">
+  <div class="brand"><span class="brand__mark" aria-hidden="true"></span>GeoKnoffhoff</div>
+  <nav class="regions" id="regions" aria-label="Region wählen"></nav>
+  <div class="topbar__actions">
+    <p class="progress"><strong id="progress-placed">0</strong><span id="progress-total">/ 0 platziert</span></p>
+    <button type="button" class="btn btn--primary" id="btn-evaluate">Auswerten</button>
+    <button type="button" class="btn" id="btn-reset">Zurücksetzen</button>
+  </div>
+</header>
+
+<main class="layout">
+  <aside class="panel" aria-labelledby="panel-title">
+    <div class="panel__head">
+      <h2 id="panel-title">Länder</h2>
+      <button type="button" class="btn btn--ghost" id="btn-shuffle" title="Reihenfolge mischen">Mischen</button>
+    </div>
+    <div class="bubbles" id="bubbles"></div>
+    <p class="panel__empty" id="panel-empty" hidden>
+      Alle Länder liegen auf der Karte.<br><span>Jetzt auswerten – oder noch etwas korrigieren.</span>
+    </p>
+    <p class="panel__credit">Kartendaten: Natural Earth (gemeinfrei)</p>
+  </aside>
+
+  <section class="stage" id="stage">
+    <div class="map-wrap" id="map-wrap" aria-label="Karte"></div>
+    <p class="stage__hint" id="hint">Ein Land aus der Liste auf den passenden Umriss ziehen.</p>
+    <div class="zoom" role="group" aria-label="Zoom">
+      <button type="button" data-zoom="in" title="Vergrößern" aria-label="Vergrößern">+</button>
+      <button type="button" data-zoom="out" title="Verkleinern" aria-label="Verkleinern">−</button>
+      <button type="button" data-zoom="reset" title="Ansicht zurücksetzen" aria-label="Ansicht zurücksetzen">⤢</button>
+    </div>
+    <div class="loading" id="loading">Karte wird geladen …</div>
+  </section>
+</main>
+
+<div class="review" id="review" hidden>
+  <div class="review__scores">
+    <span class="chip chip--correct"><strong id="score-correct">0</strong> richtig</span>
+    <span class="chip chip--wrong"><strong id="score-wrong">0</strong> falsch</span>
+    <span class="chip chip--open"><strong id="score-open">0</strong> offen</span>
+  </div>
+  <p class="review__text" id="review-text"></p>
+  <div class="review__actions">
+    <button type="button" class="btn btn--primary" id="btn-continue">Weiter üben</button>
+    <button type="button" class="btn" id="btn-restart">Neue Runde</button>
+  </div>
+</div>
+
+<div class="ghost" id="ghost" hidden aria-hidden="true"></div>
+<div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+
+<script type="module" src="js/main.js"></script>
+</body>
+</html>

@@ -1,0 +1,8 @@
+services:
+  geoknoffhoff:
+    build: .
+    image: geoknoffhoff:latest
+    container_name: geoknoffhoff
+    ports:
+      - "8080:80"
+    restart: unless-stopped

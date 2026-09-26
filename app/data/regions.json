@@ -1,0 +1,29 @@
+{
+ "regions": [
+  {
+   "id": "europa",
+   "name": "Europa",
+   "count": 41
+  },
+  {
+   "id": "afrika",
+   "name": "Afrika",
+   "count": 51
+  },
+  {
+   "id": "asien",
+   "name": "Asien",
+   "count": 45
+  },
+  {
+   "id": "amerika",
+   "name": "Amerika",
+   "count": 29
+  },
+  {
+   "id": "ozeanien",
+   "name": "Ozeanien",
+   "count": 7
+  }
+ ]
+}
