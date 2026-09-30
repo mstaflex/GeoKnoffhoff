@@ -52,6 +52,7 @@ export class MapView {
     this.svg = svg;
 
     const context = el('g', { class: 'layer-context' });
+    const frames = el('g', { class: 'layer-frames' });
     const land = el('g', { class: 'layer-land' });
     const hit = el('g', { class: 'layer-hit', 'pointer-events': 'none' });
     this.leaders = el('g', { class: 'layer-leaders' });
@@ -88,7 +89,11 @@ export class MapView {
       }
     }
 
-    svg.append(context, land, hit, this.leaders);
+    for (const [x, y, w, h] of region.frames ?? []) {
+      frames.append(el('rect', { class: 'inset-frame', x, y, width: w, height: h, rx: 3 }));
+    }
+
+    svg.append(context, frames, land, hit, this.leaders);
 
     this.labelLayer = document.createElement('div');
     this.labelLayer.className = 'labels';

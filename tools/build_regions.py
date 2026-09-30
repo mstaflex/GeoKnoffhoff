@@ -21,15 +21,22 @@ import sys
 import urllib.request
 from typing import Iterable
 
-SOURCE_URL = (
-    "https://raw.githubusercontent.com/nvkelso/natural-earth-vector/master/"
-    "geojson/ne_50m_admin_0_countries.geojson"
+BASE_URL = (
+    "https://raw.githubusercontent.com/nvkelso/natural-earth-vector/master/geojson/"
 )
+# Kontinentkarten kommen mit 1:50 Mio aus; fuer einzelne Laender (Bundeslaender,
+# Bundesstaaten, Oblaste) braucht es 1:10 Mio - und zwar fuer Einheiten und
+# Nachbarlaender gleichermassen, sonst klaffen an den Grenzen Luecken.
+SOURCES = {
+    "admin0_50m": "ne_50m_admin_0_countries.geojson",
+    "admin0_10m": "ne_10m_admin_0_countries.geojson",
+    "admin1_10m": "ne_10m_admin_1_states_provinces.geojson",
+}
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.dirname(HERE)
 OUT_DIR = os.path.join(REPO, "app", "data")
-CACHE = os.path.join(HERE, ".cache", "ne_50m_admin_0_countries.geojson")
+CACHE_DIR = os.path.join(HERE, ".cache")
 
 # Breite der Karte in SVG-Einheiten; die Hoehe folgt aus dem Kartenfenster.
 VIEW_WIDTH = 1000.0
@@ -46,6 +53,8 @@ MIN_VISIBLE_FRACTION = 0.55
 # ausserhalb des Kartenausschnitts liegen, sonst sieht man seine geraden
 # Schnittkanten mitten in der Karte.
 GEO_CLIP_MARGIN = 30.0
+# Rand innerhalb eines Inset-Rahmens (SVG-Einheiten).
+INSET_PADDING = 6.0
 
 # Natural Earth ordnet manche Laender anders zu, als es fuer ein Quiz sinnvoll
 # ist (Russland z.B. komplett "Europe"). "force" macht ein Land in einer Region
@@ -91,6 +100,63 @@ REGIONS = [
         "window": (110.0, -48.0, 190.0, 12.0),
         "continents": ["Oceania"],
         "force": [],
+    },
+]
+
+# Karten einzelner Laender: statt Staaten werden Verwaltungseinheiten gespielt.
+# "insets" setzt weit abseits liegende Einheiten in einen eigenen Rahmen, damit
+# Alaska und Hawaii die Karte der 48 zusammenhaengenden Staaten nicht sprengen.
+SUBREGIONS = [
+    {
+        "id": "deutschland",
+        "name": "Deutschland",
+        "unit": "Bundesländer",
+        "adm0": "DEU",
+        "center": (10.45, 51.2),
+        "window": (5.3, 46.9, 15.7, 55.3),
+        "names": {"DE-HB": "Bremen"},  # NE: "Freie Hansestadt Bremen"
+    },
+    {
+        "id": "usa",
+        "name": "USA",
+        "unit": "Bundesstaaten",
+        "adm0": "USA",
+        "center": (-97.0, 38.5),
+        "window": (-125.6, 24.2, -66.3, 49.6),
+        "exclude": ["District of Columbia"],  # kein Bundesstaat
+        "insets": [
+            {
+                "members": ["Alaska"],
+                "center": (-152.0, 63.5),
+                # die aeussere Aleutenkette bleibt draussen, sonst schrumpft
+                # das Festland im Rahmen auf Briefmarkengroesse
+                "window": (-168.5, 53.5, -129.0, 71.5),
+                "place": (0.008, 0.66, 0.20),
+            },
+            {
+                "members": ["Hawaii"],
+                "center": (-157.0, 20.3),
+                "window": (-160.8, 18.5, -154.5, 22.5),
+                "place": (0.225, 0.845, 0.13),
+            },
+        ],
+    },
+    {
+        "id": "ukraine",
+        "name": "Ukraine",
+        "unit": "Regionen",
+        # Krim und Sewastopol fuehrt Natural Earth unter Russland (faktische
+        # Kontrolle), die ISO-Codes im selben Datensatz sagen UA-43 und UA-40.
+        # Die Auswahl laeuft deshalb ueber ISO 3166-2, nicht ueber das Land.
+        "iso_prefix": "UA-",
+        "adm0": "UKR",  # Umriss der Ukraine zeichnen die Regionen selbst
+        "center": (31.2, 48.4),
+        "window": (21.6, 43.9, 40.5, 52.6),
+        "names": {
+            "UA-30": "Kiew (Stadt)",
+            "UA-32": "Kiew (Oblast)",
+            "UA-43": "Krim",
+        },
     },
 ]
 
@@ -464,38 +530,112 @@ def path_from_rings(rings) -> str:
     return "".join(parts)
 
 
-def build_region(cfg, features, report):
+def expand_window(window, margin: float = GEO_CLIP_MARGIN):
+    """Fenster fuer den geographischen Vorschnitt aufweiten."""
+    lon0, lat0, lon1, lat1 = window
+    return (lon0 - margin, max(-90.0, lat0 - margin), lon1 + margin, min(90.0, lat1 + margin))
+
+
+def prepare_shape(polys, proj, window, wide_window, lon_c, view_rect):
+    """Geometrie kartenfertig machen: vorschneiden, projizieren, zuschneiden,
+    vereinfachen.
+
+    Rueckgabe: (Polygone, Flaeche in SVG-Einheiten^2, sichtbarer Anteil) oder
+    None, wenn auf der Karte nichts uebrig bleibt.
+    """
+    full_geo = sum(geo_area(rings[0]) for rings in polys)
+    vis_geo = 0.0
+    projected: list[list[list[tuple[float, float]]]] = []
+    for rings in polys:
+        clipped = geo_clip(rings, wide_window, lon_c)
+        if not clipped:
+            continue
+        # Sichtbarkeitsquote am exakten Fenster messen, nicht am Vorschnitt
+        exact = geo_clip(rings, window, lon_c)
+        if exact:
+            vis_geo += geo_area(exact[0])
+        proj_rings = []
+        for ring in clipped:
+            pr = [proj(lon, lat) for lon, lat in ring]
+            pr = clip_ring(pr, view_rect)
+            if len(pr) >= 3:
+                proj_rings.append(pr)
+        if proj_rings:
+            projected.append(proj_rings)
+    if not projected:
+        return None
+
+    area_px = sum(ring_area(r[0]) - sum(ring_area(h) for h in r[1:]) for r in projected)
+    if area_px < 0.4:  # unsichtbar klein
+        return None
+
+    simplified = []
+    for rings in projected:
+        sr = [simplify(r, SIMPLIFY_TOLERANCE) for r in rings]
+        sr = [r for r in sr if len(r) >= 3]
+        if sr:
+            simplified.append(sr)
+    if not simplified:
+        return None
+
+    fraction = (vis_geo / full_geo) if full_geo > 0 else 0.0
+    return (simplified, area_px, fraction)
+
+
+def make_entry(uid: str, simplified, area_px: float, name: str | None = None) -> dict:
+    """Karteneintrag bauen; mit Namen wird er bespielbar und bekommt ein Label."""
+    entry = {
+        "id": uid,
+        "path": path_from_rings([r for rings in simplified for r in rings]),
+        "area": round(area_px, 1),
+    }
+    if name:
+        # Label in das groesste sichtbare Teilstueck setzen
+        biggest = max(simplified, key=lambda rings: ring_area(rings[0]))
+        lx, ly, lr = pole_of_inaccessibility(biggest)
+        entry["name"] = name
+        entry["label"] = [round(lx, 1), round(ly, 1), round(lr, 1)]
+        entry["play"] = True
+    return entry
+
+
+def land_extent(items, proj, window, lon_c):
+    """Rohkoordinaten-Bbox der Geometrien innerhalb des Fensters."""
+    xs: list[float] = []
+    ys: list[float] = []
+    for geom in items:
+        for rings in iter_polygons(geom):
+            for ring in geo_clip(rings, window, lon_c):
+                for lon, lat in ring:
+                    x, y = proj.raw(lon, lat)
+                    xs.append(x)
+                    ys.append(y)
+    if not xs:
+        return None
+    return (min(xs), min(ys), max(xs), max(ys))
+
+
+def build_region(cfg, report):
+    features = load_source("admin0_50m")
     lon_c, lat_c = cfg["center"]
     proj = Projection(lon_c, lat_c)
 
     # Der Ausschnitt soll am Land der Region kleben, nicht am groben Fenster -
     # sonst steht z.B. bei Amerika der halbe Pazifik im Bild.
-    xs: list[float] = []
-    ys: list[float] = []
-    for feat in features:
-        props = feat["properties"]
-        iso = props.get("ADM0_A3") or props.get("ISO_A3") or props.get("NAME")
-        if props.get("CONTINENT") not in cfg["continents"] and iso not in cfg["force"]:
-            continue
-        for rings in iter_polygons(feat.get("geometry")):
-            for ring in geo_clip(rings, cfg["window"], lon_c):
-                for lon, lat in ring:
-                    x, y = proj.raw(lon, lat)
-                    xs.append(x)
-                    ys.append(y)
-    if xs:
-        width, height = proj.fit_bbox(min(xs), min(ys), max(xs), max(ys), VIEW_WIDTH, PADDING)
+    members = [
+        feat.get("geometry")
+        for feat in features
+        if feat["properties"].get("CONTINENT") in cfg["continents"]
+        or (feat["properties"].get("ADM0_A3") or feat["properties"].get("ISO_A3")
+            or feat["properties"].get("NAME")) in cfg["force"]
+    ]
+    extent = land_extent(members, proj, cfg["window"], lon_c)
+    if extent:
+        width, height = proj.fit_bbox(*extent, VIEW_WIDTH, PADDING)
     else:
         width, height = proj.fit(cfg["window"], VIEW_WIDTH, PADDING)
     view_rect = (-4.0, -4.0, width + 4.0, height + 4.0)
-
-    lon0, lat0, lon1, lat1 = cfg["window"]
-    wide_window = (
-        max(-360.0, lon0 - GEO_CLIP_MARGIN),
-        max(-90.0, lat0 - GEO_CLIP_MARGIN),
-        min(360.0, lon1 + GEO_CLIP_MARGIN),
-        min(90.0, lat1 + GEO_CLIP_MARGIN),
-    )
+    wide_window = expand_window(cfg["window"])
 
     countries = []
     for feat in features:
@@ -507,36 +647,11 @@ def build_region(cfg, features, report):
         polys = iter_polygons(feat.get("geometry"))
         if not polys:
             continue
-
-        full_geo = sum(geo_area(r[0]) for r in polys)
-
-        # geographischer Vorschnitt, dann projizieren, dann auf die Karte schneiden
-        vis_geo = 0.0
-        projected: list[list[list[tuple[float, float]]]] = []
-        for rings in polys:
-            clipped = geo_clip(rings, wide_window, lon_c)
-            if not clipped:
-                continue
-            # Sichtbarkeitsquote am exakten Fenster messen, nicht am Vorschnitt
-            exact = geo_clip(rings, cfg["window"], lon_c)
-            if exact:
-                vis_geo += geo_area(exact[0])
-            proj_rings = []
-            for ring in clipped:
-                pr = [proj(lon, lat) for lon, lat in ring]
-                pr = clip_ring(pr, view_rect)
-                if len(pr) >= 3:
-                    proj_rings.append(pr)
-            if proj_rings:
-                projected.append(proj_rings)
-        if not projected:
+        shape = prepare_shape(polys, proj, cfg["window"], wide_window, lon_c, view_rect)
+        if shape is None:
             continue
+        simplified, area_px, fraction = shape
 
-        area_px = sum(ring_area(rings[0]) - sum(ring_area(h) for h in rings[1:]) for rings in projected)
-        if area_px < 0.4:  # unsichtbar klein
-            continue
-
-        fraction = (vis_geo / full_geo) if full_geo > 0 else 0.0
         forced = iso in cfg["force"]
         in_region = props.get("CONTINENT") in cfg["continents"] or forced
         # Natural Earth fuehrt auch Kronbesitzungen und autonome Gebiete als
@@ -558,80 +673,201 @@ def build_region(cfg, features, report):
         if not playable and fraction < 0.08 and area_px < 150:
             continue
 
-        simplified = []
-        for rings in projected:
-            sr = [simplify(r, SIMPLIFY_TOLERANCE) for r in rings]
-            sr = [r for r in sr if len(r) >= 3]
-            if sr:
-                simplified.append(sr)
-        if not simplified:
-            continue
-
-        entry = {
-            "id": iso,
-            "path": path_from_rings([r for rings in simplified for r in rings]),
-            "area": round(area_px, 1),
-        }
+        name = NAME_OVERRIDES.get(iso) or props.get("NAME_DE") or props["NAME"]
+        entry = make_entry(iso, simplified, area_px, name if playable else None)
         if not in_region:
             entry["dim"] = True  # Nachbarregion: nur zur Orientierung
-
-        if playable:
-            name = NAME_OVERRIDES.get(iso) or props.get("NAME_DE") or props["NAME"]
-            # Label in das groesste sichtbare Teilstueck setzen
-            biggest = max(simplified, key=lambda rings: ring_area(rings[0]))
-            lx, ly, lr = pole_of_inaccessibility(biggest)
-            entry["name"] = name
-            entry["label"] = [round(lx, 1), round(ly, 1), round(lr, 1)]
-            entry["play"] = True
-
         countries.append(entry)
 
-    playable = [c for c in countries if c.get("play")]
-    playable.sort(key=lambda c: c["name"])
-    report.append(
-        {
-            "region": cfg["name"],
-            "playable": len(playable),
-            "context": len(countries) - len(playable),
-            "size": f"{width:.0f}x{height:.0f}",
-            "smallest": [(c["name"], c["area"]) for c in sorted(playable, key=lambda c: c["area"])[:6]],
-        }
-    )
-
+    add_report(report, cfg, countries, width, height)
     return {
         "id": cfg["id"],
         "name": cfg["name"],
+        "unit": cfg.get("unit", "Länder"),
         "width": round(width, 1),
         "height": round(height, 1),
         "countries": countries,
     }
 
 
-def load_features(path: str | None):
-    src = path or CACHE
-    if not path and not os.path.exists(CACHE):
-        os.makedirs(os.path.dirname(CACHE), exist_ok=True)
-        print(f"lade {SOURCE_URL}", file=sys.stderr)
-        with urllib.request.urlopen(SOURCE_URL, timeout=120) as resp, open(CACHE, "wb") as fh:
+def unit_matches(props, cfg) -> bool:
+    """Gehoert diese Verwaltungseinheit zur Region?"""
+    prefix = cfg.get("iso_prefix")
+    if prefix:
+        return (props.get("iso_3166_2") or "").startswith(prefix)
+    return props.get("adm0_a3") == cfg["adm0"]
+
+
+def unit_name(props, cfg) -> str:
+    uid = props.get("iso_3166_2") or props.get("name")
+    return cfg.get("names", {}).get(uid) or props.get("name_de") or props.get("name")
+
+
+def build_inset(inset, members, cfg, main_width: float, main_height: float):
+    """Eine abgesetzte Teilkarte (z.B. Alaska) in einen Rahmen setzen.
+
+    Die Teilkarte bekommt eine eigene Projektion, landet aber im selben
+    Koordinatensystem wie die Hauptkarte - Treffererkennung und Namensschilder
+    funktionieren dadurch unveraendert.
+    """
+    lon_c, lat_c = inset["center"]
+    proj = Projection(lon_c, lat_c)
+    extent = land_extent([u.get("geometry") for u in members], proj, inset["window"], lon_c)
+    if extent is None:
+        return [], None, main_height
+
+    x0, y0, x1, y1 = extent
+    box_x = inset["place"][0] * main_width
+    box_y = inset["place"][1] * main_height
+    box_w = inset["place"][2] * main_width
+    proj.scale = (box_w - 2 * INSET_PADDING) / max(x1 - x0, 1e-9)
+    proj.tx = box_x + INSET_PADDING - x0 * proj.scale
+    proj.ty = box_y + INSET_PADDING - y0 * proj.scale
+    box_h = (y1 - y0) * proj.scale + 2 * INSET_PADDING
+    rect = (box_x, box_y, box_x + box_w, box_y + box_h)
+
+    wide_window = expand_window(inset["window"])
+    entries = []
+    for unit in members:
+        polys = iter_polygons(unit.get("geometry"))
+        shape = prepare_shape(polys, proj, inset["window"], wide_window, lon_c, rect)
+        if shape is None:
+            continue
+        simplified, area_px, _ = shape
+        props = unit["properties"]
+        uid = props.get("iso_3166_2") or props.get("name")
+        entries.append(make_entry(uid, simplified, area_px, unit_name(props, cfg)))
+
+    frame = [round(box_x, 1), round(box_y, 1), round(box_w, 1), round(box_h, 1)]
+    return entries, frame, box_y + box_h + 4.0
+
+
+def build_admin1_region(cfg, report):
+    """Karte eines einzelnen Landes: gespielt werden Verwaltungseinheiten."""
+    excluded = set(cfg.get("exclude", []))
+    units = [
+        f for f in load_source("admin1_10m")
+        if unit_matches(f["properties"], cfg) and f["properties"].get("name") not in excluded
+    ]
+    inset_members = {n for ins in cfg.get("insets", []) for n in ins["members"]}
+    main_units = [u for u in units if u["properties"].get("name") not in inset_members]
+
+    lon_c, lat_c = cfg["center"]
+    proj = Projection(lon_c, lat_c)
+    extent = land_extent([u.get("geometry") for u in main_units], proj, cfg["window"], lon_c)
+    width, height = proj.fit_bbox(*extent, VIEW_WIDTH, PADDING)
+    view_rect = (-4.0, -4.0, width + 4.0, height + 4.0)
+    wide_window = expand_window(cfg["window"])
+
+    countries = []
+
+    # Nachbarlaender nur zur Orientierung - das eigene Land zeichnen die
+    # Verwaltungseinheiten selbst.
+    for feat in load_source("admin0_10m"):
+        props = feat["properties"]
+        if (props.get("ADM0_A3") or props.get("ISO_A3")) == cfg["adm0"]:
+            continue
+        polys = iter_polygons(feat.get("geometry"))
+        if not polys:
+            continue
+        shape = prepare_shape(polys, proj, cfg["window"], wide_window, lon_c, view_rect)
+        if shape is None:
+            continue
+        simplified, area_px, fraction = shape
+        if fraction < 0.08 and area_px < 150:
+            continue
+        entry = make_entry(props.get("ADM0_A3") or props.get("NAME"), simplified, area_px)
+        entry["dim"] = True
+        countries.append(entry)
+
+    for unit in main_units:
+        polys = iter_polygons(unit.get("geometry"))
+        if not polys:
+            continue
+        shape = prepare_shape(polys, proj, cfg["window"], wide_window, lon_c, view_rect)
+        if shape is None:
+            continue
+        simplified, area_px, _ = shape
+        props = unit["properties"]
+        uid = props.get("iso_3166_2") or props.get("name")
+        playable = area_px >= MIN_PLAYABLE_AREA
+        countries.append(make_entry(uid, simplified, area_px, unit_name(props, cfg) if playable else None))
+
+    frames = []
+    for inset in cfg.get("insets", []):
+        members = [u for u in units if u["properties"].get("name") in inset["members"]]
+        entries, frame, bottom = build_inset(inset, members, cfg, width, height)
+        countries.extend(entries)
+        if frame:
+            frames.append(frame)
+            height = max(height, bottom)
+
+    add_report(report, cfg, countries, width, height)
+    data = {
+        "id": cfg["id"],
+        "name": cfg["name"],
+        "unit": cfg["unit"],
+        "width": round(width, 1),
+        "height": round(height, 1),
+        "countries": countries,
+    }
+    if frames:
+        data["frames"] = frames
+    return data
+
+
+def add_report(report, cfg, countries, width, height):
+    playable = sorted((c for c in countries if c.get("play")), key=lambda c: c["area"])
+    report.append(
+        {
+            "region": cfg["name"],
+            "playable": len(playable),
+            "context": len(countries) - len(playable),
+            "size": f"{width:.0f}x{height:.0f}",
+            "smallest": [(c["name"], c["area"]) for c in playable[:6]],
+        }
+    )
+
+
+_SOURCE_CACHE: dict[str, list] = {}
+
+
+def load_source(key: str) -> list:
+    """Natural-Earth-Datensatz laden, bei Bedarf einmalig herunterladen."""
+    if key in _SOURCE_CACHE:
+        return _SOURCE_CACHE[key]
+    name = SOURCES[key]
+    path = os.path.join(CACHE_DIR, name)
+    if not os.path.exists(path):
+        os.makedirs(CACHE_DIR, exist_ok=True)
+        url = BASE_URL + name
+        print(f"lade {url}", file=sys.stderr)
+        with urllib.request.urlopen(url, timeout=300) as resp, open(path, "wb") as fh:
             fh.write(resp.read())
-    with open(src, "r", encoding="utf-8") as fh:
-        return json.load(fh)["features"]
+    with open(path, "r", encoding="utf-8") as fh:
+        features = json.load(fh)["features"]
+    _SOURCE_CACHE[key] = features
+    return features
 
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--input", help="lokale ne_50m_admin_0_countries.geojson")
     ap.add_argument("--out", default=OUT_DIR, help="Ausgabeverzeichnis")
+    ap.add_argument("--only", help="nur diese Region bauen (id)")
     args = ap.parse_args()
 
     sys.setrecursionlimit(10000)
-    features = load_features(args.input)
     os.makedirs(args.out, exist_ok=True)
 
     report: list[dict] = []
     index = []
-    for cfg in REGIONS:
-        data = build_region(cfg, features, report)
+    jobs = [(cfg, "welt", build_region) for cfg in REGIONS]
+    jobs += [(cfg, "land", build_admin1_region) for cfg in SUBREGIONS]
+
+    for cfg, group, build in jobs:
+        if args.only and cfg["id"] != args.only:
+            continue
+        data = build(cfg, report)
         out_path = os.path.join(args.out, f"{cfg['id']}.json")
         with open(out_path, "w", encoding="utf-8") as fh:
             json.dump(data, fh, ensure_ascii=False, separators=(",", ":"))
@@ -639,18 +875,21 @@ def main() -> int:
             {
                 "id": cfg["id"],
                 "name": cfg["name"],
+                "unit": data["unit"],
+                "group": group,
                 "count": sum(1 for c in data["countries"] if c.get("play")),
             }
         )
-        print(f"{cfg['id']:10s} -> {os.path.getsize(out_path)/1024:6.1f} kB")
+        print(f"{cfg['id']:12s} -> {os.path.getsize(out_path)/1024:6.1f} kB")
 
-    with open(os.path.join(args.out, "regions.json"), "w", encoding="utf-8") as fh:
-        json.dump({"regions": index}, fh, ensure_ascii=False, indent=1)
+    if not args.only:
+        with open(os.path.join(args.out, "regions.json"), "w", encoding="utf-8") as fh:
+            json.dump({"regions": index}, fh, ensure_ascii=False, indent=1)
 
     print()
     for r in report:
-        print(f"{r['region']:10s} {r['playable']:3d} spielbar, {r['context']:3d} Kontext, {r['size']}")
-        print("           kleinste:", ", ".join(f"{n} ({a:.0f})" for n, a in r["smallest"]))
+        print(f"{r['region']:12s} {r['playable']:3d} spielbar, {r['context']:3d} Kontext, {r['size']}")
+        print("             kleinste:", ", ".join(f"{n} ({a:.0f})" for n, a in r["smallest"]))
     return 0
 
 

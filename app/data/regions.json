@@ -3,27 +3,58 @@
   {
    "id": "europa",
    "name": "Europa",
+   "unit": "Länder",
+   "group": "welt",
    "count": 41
   },
   {
    "id": "afrika",
    "name": "Afrika",
+   "unit": "Länder",
+   "group": "welt",
    "count": 51
   },
   {
    "id": "asien",
    "name": "Asien",
+   "unit": "Länder",
+   "group": "welt",
    "count": 45
   },
   {
    "id": "amerika",
    "name": "Amerika",
+   "unit": "Länder",
+   "group": "welt",
    "count": 29
   },
   {
    "id": "ozeanien",
    "name": "Ozeanien",
+   "unit": "Länder",
+   "group": "welt",
    "count": 7
+  },
+  {
+   "id": "deutschland",
+   "name": "Deutschland",
+   "unit": "Bundesländer",
+   "group": "land",
+   "count": 16
+  },
+  {
+   "id": "usa",
+   "name": "USA",
+   "unit": "Bundesstaaten",
+   "group": "land",
+   "count": 50
+  },
+  {
+   "id": "ukraine",
+   "name": "Ukraine",
+   "unit": "Regionen",
+   "group": "land",
+   "count": 27
   }
  ]
 }

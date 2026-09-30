@@ -9,7 +9,9 @@ steht als kleines Schild im Land.
 **Richtig oder falsch bleibt bis zur Auswertung offen.** Erst der Knopf
 „Auswerten“ färbt grün/rot und zeigt, was noch fehlt.
 
-Regionen: **Europa, Afrika, Asien, Amerika, Ozeanien**.
+Weltregionen: **Europa, Afrika, Asien, Amerika, Ozeanien** – Länder zuordnen.
+Einzelne Länder: **Deutschland** (16 Bundesländer), **USA** (50 Bundesstaaten,
+Alaska und Hawaii in eigenen Rahmen), **Ukraine** (27 Regionen).
 
 ## Starten
 
@@ -52,6 +54,10 @@ Zur Laufzeit rechnet die App nichts: `tools/build_regions.py` erzeugt aus den
 Natural-Earth-Daten fertige SVG-Pfade. Deshalb braucht der Container weder
 Netzzugang noch eine Geo-Bibliothek, und es gibt keinerlei JS-Abhängigkeiten.
 
+Kontinentkarten entstehen aus dem Datensatz 1:50 Mio, Länderkarten aus 1:10 Mio –
+Verwaltungseinheiten und Nachbarländer aus derselben Stufe, sonst klaffen an den
+Grenzen Lücken.
+
 Der Generator
 
 * projiziert jede Region flächentreu (Lambert azimutal, auf die Region zentriert),
@@ -59,18 +65,28 @@ Der Generator
 * schneidet die Geometrie auf den Kartenausschnitt zu,
 * vereinfacht die Umrisse (Douglas-Peucker) und
 * sucht je Land den Punkt mit dem größten Abstand zum Rand als Ankerpunkt für
-  das Namensschild.
+  das Namensschild und
+* setzt abgelegene Teile (Alaska, Hawaii) mit eigener Projektion in einen
+  Rahmen – sie landen im selben Koordinatensystem, Treffererkennung und
+  Beschriftung funktionieren dadurch unverändert.
 
-Neu bauen (lädt die Quelldaten einmalig nach `tools/.cache/`):
+Neu bauen (lädt die Quelldaten einmalig nach `tools/.cache/`, rund 55 MB):
 
 ```bash
-python3 tools/build_regions.py
+python3 tools/build_regions.py              # alle Karten, ca. 20 s
+python3 tools/build_regions.py --only usa   # nur eine
 ```
 
-Die Regionen – Fenster, Zentrum, Sonderfälle wie Russland oder Grönland –
-stehen als `REGIONS` oben in `tools/build_regions.py`. Spielbar sind souveräne
-Staaten ab einer Mindestgröße; Kleinstaaten und Nachbarregionen werden nur
-gezeichnet, damit die Karte vollständig aussieht.
+Die Regionen – Fenster, Zentrum, Sonderfälle wie Russland oder Grönland – stehen
+als `REGIONS` und `SUBREGIONS` oben in `tools/build_regions.py`. Spielbar sind
+souveräne Staaten bzw. Verwaltungseinheiten ab einer Mindestgröße; Kleinstaaten
+und Nachbarregionen werden nur gezeichnet, damit die Karte vollständig aussieht.
+
+Eine Entscheidung, die man kennen sollte: Natural Earth führt **Krim und
+Sewastopol unter Russland** (faktische Kontrolle), vergibt im selben Datensatz
+aber die ISO-Codes `UA-43` und `UA-40`. Die Ukraine-Karte wählt ihre Einheiten
+deshalb über ISO 3166-2 aus – die Krim ist damit Teil der Ukraine, wie es dem
+völkerrechtlichen Stand entspricht.
 
 ## Aufbau
 

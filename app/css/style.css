@@ -102,6 +102,15 @@ body.is-dragging .bubble { cursor: grabbing; }
   transition: background .15s, color .15s, border-color .15s;
 }
 .region-tab:hover { background: var(--surface-2); color: var(--text); }
+.regions__sep {
+  align-self: center;
+  width: 1px;
+  height: 20px;
+  margin: 0 6px;
+  background: var(--line);
+  flex: 0 0 auto;
+}
+
 .region-tab[aria-current="true"] {
   background: rgba(34, 211, 238, .14);
   border-color: rgba(34, 211, 238, .5);
@@ -353,6 +362,13 @@ body.is-dragging .bubble { cursor: grabbing; }
 .country.is-correct { fill: rgba(52, 211, 153, .55); stroke: var(--correct); stroke-width: 1.4; }
 .country.is-wrong { fill: rgba(251, 113, 133, .5); stroke: var(--wrong); stroke-width: 1.4; }
 .country.is-missing { fill: #2b3c51; stroke: #4c6482; }
+
+.inset-frame {
+  fill: var(--ocean-bottom);
+  stroke: var(--line);
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+}
 
 .leader { stroke: #c3d5ea; stroke-width: 1.2; vector-effect: non-scaling-stroke; opacity: .7; }
 .leader-dot { fill: #e8f2ff; stroke: #0b1b2b; stroke-width: 1; vector-effect: non-scaling-stroke; }

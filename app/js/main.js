@@ -7,6 +7,7 @@ const $ = (id) => document.getElementById(id);
 
 const ui = {
   regions: $('regions'),
+  panelTitle: $('panel-title'),
   bubbles: $('bubbles'),
   panelEmpty: $('panel-empty'),
   mapWrap: $('map-wrap'),
@@ -249,7 +250,7 @@ function showReview() {
   $('score-open').textContent = String(result.open.length);
   const quote = result.total ? Math.round((result.correct.length / result.total) * 100) : 0;
   ui.reviewText.textContent =
-    `${result.correct.length} von ${result.total} Ländern richtig – ${quote} %.` +
+    `${result.correct.length} von ${result.total} richtig – ${quote} %.` +
     (result.open.length ? ' Graue Namen zeigen, was noch fehlt.' : '');
   ui.review.hidden = false;
   ui.hint.hidden = true;
@@ -272,7 +273,15 @@ function leaveReview() {
 
 function renderTabs(activeId) {
   ui.regions.textContent = '';
+  let group = null;
   for (const region of regionIndex) {
+    if (group !== null && region.group !== group) {
+      const sep = document.createElement('span');
+      sep.className = 'regions__sep';
+      sep.setAttribute('aria-hidden', 'true');
+      ui.regions.append(sep);
+    }
+    group = region.group;
     const tab = document.createElement('button');
     tab.type = 'button';
     tab.className = 'region-tab';
@@ -309,6 +318,7 @@ async function openRegion(id) {
       map.setLabel(targetId, { text: game.name(countryId) });
     }
     renderTabs(id);
+    ui.panelTitle.textContent = data.unit ?? 'Länder';
     renderBubbles();
     ui.review.hidden = true;
     ui.hint.hidden = game.placedCount > 0;
