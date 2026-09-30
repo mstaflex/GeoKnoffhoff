@@ -19,11 +19,17 @@ Alaska und Hawaii in eigenen Rahmen), **Ukraine** (27 Regionen).
 docker compose up --build        # danach: http://localhost:8080
 ```
 
-Oder ohne Compose:
+Der Container lauscht auf Port 8080 und ist per Compose nur an `127.0.0.1`
+gebunden – für den Zugang aus dem Internet gehört ein Reverse Proxy mit TLS
+davor. Ohne Compose:
 
 ```bash
 docker build -t geoknoffhoff .
-docker run -d -p 8080:80 --name geoknoffhoff geoknoffhoff
+docker run -d --name geoknoffhoff \
+  -p 127.0.0.1:8080:8080 \
+  --read-only --tmpfs /tmp --tmpfs /var/cache/nginx \
+  --cap-drop ALL --security-opt no-new-privileges:true \
+  geoknoffhoff
 ```
 
 Zum Entwickeln genügt ein beliebiger statischer Server, die App hat keinen
@@ -112,6 +118,41 @@ Zwei Details, die den Unterschied machen:
   Zypern greifbar.
 * **Namensschilder** weichen einander aus. Passt ein Schild nicht ins Land,
   landet es daneben und wird mit Punkt und Linie an seinen Umriss angebunden.
+
+## Sicherheit beim Hosten
+
+Die Anwendung hat **keine Laufzeit-Abhängigkeiten**: kein Framework, kein npm-
+oder pip-Paket, kein CDN, keine Fonts von fremden Servern, kein Tracking, keine
+Cookies, kein Backend, keine Datenbank. Im Browser laufen drei eigene
+JavaScript-Dateien, im Container liegt nur nginx mit statischen Dateien. Der
+Generator in `tools/` benutzt ausschließlich die Python-Standardbibliothek und
+läuft beim Entwickeln, nicht auf dem Server.
+
+Damit bleibt als Angriffsfläche im Wesentlichen nginx selbst – und der wird so
+knapp wie möglich gehalten:
+
+| Maßnahme | Wo |
+| --- | --- |
+| nginx ohne root (uid 101), aktuelles Basis-Image | `Dockerfile` |
+| Dateisystem schreibgeschützt, alle Capabilities entzogen, `no-new-privileges` | `docker-compose.yml` |
+| nur an `127.0.0.1` gebunden, Speicher- und Prozessgrenze | `docker-compose.yml` |
+| nur GET und HEAD, alles andere 405 | `nginx.conf` |
+| strenge Content-Security-Policy (`default-src 'none'`, kein `unsafe-inline`) | `nginx.conf` |
+| `nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy`, `Permissions-Policy`, COOP/CORP | `nginx.conf` |
+| `server_tokens off`, kurze Timeouts, 1 kB Body-Limit | `nginx.conf` |
+
+Die strenge CSP ist nur möglich, weil die Seite wirklich nichts Fremdes lädt –
+sie kommt ohne `unsafe-inline` und `unsafe-eval` aus.
+
+**Was du selbst tun solltest:** Ein Basis-Image altert. Baue das Image
+regelmäßig neu (`docker compose build --pull`), damit nginx- und
+Alpine-Patches ankommen, und scanne es bei Bedarf:
+
+```bash
+docker scout cves geoknoffhoff:latest
+# oder
+trivy image geoknoffhoff:latest
+```
 
 ## Kartendaten
 

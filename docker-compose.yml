@@ -3,6 +3,20 @@ services:
     build: .
     image: geoknoffhoff:latest
     container_name: geoknoffhoff
+    # Nur auf localhost offen. TLS und Zugang aus dem Internet gehören vor
+    # den Container (Reverse Proxy), nicht hinein.
     ports:
-      - "8080:80"
+      - "127.0.0.1:8080:8080"
+    # Der Container braucht nichts zu schreiben und keine Rechte.
+    read_only: true
+    tmpfs:
+      - /tmp:size=8m
+      - /var/cache/nginx:size=16m
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    # Lastbremse, damit ein Angriff nicht den ganzen Host mitzieht
+    mem_limit: 128m
+    pids_limit: 64
     restart: unless-stopped
